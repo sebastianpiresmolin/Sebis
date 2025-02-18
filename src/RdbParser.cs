@@ -101,7 +101,7 @@ public class RdbParser
 
     private int ReadLength(byte[] data, out int bytesConsumed)
     {
-        byte firstByte = data;
+        byte firstByte = data[0];
         bytesConsumed = 1;
 
         switch (firstByte >> 6)
