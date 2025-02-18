@@ -33,4 +33,4 @@ done
 #
 # - Edit this to change how your program runs locally
 # - Edit .codecrafters/run.sh to change how your program runs remotely
-exec /tmp/codecrafters-build-redis-csharp/codecrafters-redis "$@"
+exec /tmp/codecrafters-build-redis-csharp/codecrafters-redis "$DIR" "$DBFILENAME"
