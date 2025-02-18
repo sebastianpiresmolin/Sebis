@@ -18,11 +18,11 @@ set -e # Exit early if any commands fail
 )
 
 # Extract the directory and dbfilename from the arguments
-while [ "$#" -gt 0 ]; do
+while [ $# -gt 0 ]; do
     case "$1" in
         --dir)
             DIR="$2"
-            shift 2  # Shift twice for option + argument
+            shift 2
             ;;
         --dbfilename)
             DBFILENAME="$2"
@@ -41,4 +41,4 @@ exec ./your_program "$DIR" "$DBFILENAME"
 #
 # - Edit this to change how your program runs locally
 # - Edit .codecrafters/run.sh to change how your program runs remotely
-exec /tmp/codecrafters-build-redis-csharp/codecrafters-redis "$DIR" "$DBFILENAME"
+exec /tmp/codecrafters-build-redis-csharp/codecrafters-redis --dir "$DIR" --dbfilename "$DBFILENAME"

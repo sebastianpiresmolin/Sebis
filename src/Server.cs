@@ -11,10 +11,23 @@ Console.WriteLine("Server started. Waiting for clients to connect...");
 var store = new ConcurrentDictionary<string, string>(); // In-memory key-value store
 var expirationTimes = new ConcurrentDictionary<string, long>(); // Key expiration times
 
-// Store configuration values
-var config = new ConcurrentDictionary<string, string>();
-if (args.Length >= 1) config["dir"] = args[0];
-if (args.Length >= 2) config["dbfilename"] = args[1];
+
+var config = new ConcurrentDictionary<string, string>(); // Configuration settings
+
+for (int i = 0; i < args.Length; i++) // Parse command line arguments
+{
+    switch (args[i])
+    {
+        case "--dir":
+            config["dir"] = args[i + 1];
+            i++;
+            break;
+        case "--dbfilename":
+            config["dbfilename"] = args[i + 1];
+            i++;
+            break;
+    }
+}
 
 var commandHandler = new CommandHandler(store, expirationTimes, config);
 
@@ -33,7 +46,7 @@ _ = Task.Run(async () =>
                 Console.WriteLine($"Key {key} expired and removed.");
             }
         }
-        await Task.Delay(100); // Check every 100ms
+        await Task.Delay(100);
     }
 });
 
