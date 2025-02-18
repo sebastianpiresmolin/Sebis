@@ -12,20 +12,23 @@ var store = new ConcurrentDictionary<string, string>(); // In-memory key-value s
 var expirationTimes = new ConcurrentDictionary<string, long>(); // Key expiration times
 
 
-var config = new ConcurrentDictionary<string, string>(); // Configuration settings
-
-for (int i = 0; i < args.Length; i++) // Parse command line arguments
+var config = new ConcurrentDictionary<string, string>(); // Store configuration values
+for (int i = 0; i < args.Length; i += 2)
 {
-    switch (args[i])
+    if (i + 1 < args.Length)
     {
-        case "--dir":
-            config["dir"] = args[i + 1];
-            i++;
-            break;
-        case "--dbfilename":
-            config["dbfilename"] = args[i + 1];
-            i++;
-            break;
+        config[args[i].TrimStart('-')] = args[i + 1];
+    }
+}
+
+// Load RDB file if specified
+if (config.TryGetValue("dir", out string dir) && config.TryGetValue("dbfilename", out string dbfilename))
+{
+    string rdbPath = Path.Combine(dir, dbfilename);
+    if (File.Exists(rdbPath))
+    {
+        var rdbParser = new RdbParser();
+        rdbParser.Parse(rdbPath, store, expirationTimes);
     }
 }
 
