@@ -107,8 +107,23 @@ public class RdbParser
                 if (BitConverter.IsLittleEndian)
                     Array.Reverse(fourBytes);
                 return BitConverter.ToUInt32(fourBytes, 0);
+            case 3:
+                int encoding = firstByte & 0x3F;
+                switch (encoding)
+                {
+                    case 0: // 8 bit integer
+                        return reader.ReadByte();
+                    case 1: // 16 bit integer
+                        return BitConverter.ToUInt16(reader.ReadBytes(2).Reverse().ToArray(), 0);
+                    case 2: // 32 bit integer
+                        return BitConverter.ToUInt32(reader.ReadBytes(4).Reverse().ToArray(), 0);
+                    case 3: // LZF compressed string
+                        throw new NotSupportedException("LZF compression not supported");
+                    default:
+                        throw new NotSupportedException($"Unknown string encoding: {encoding}");
+                }
             default:
-                throw new NotSupportedException("Special encodings not supported");
+                throw new InvalidDataException("Invalid length encoding");
         }
     }
 
