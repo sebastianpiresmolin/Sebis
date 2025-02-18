@@ -32,7 +32,8 @@ while (true)
             string request = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
             Console.WriteLine($"Received: {request}");
 
-            if (request == "PING")
+            // Parse RESP formatted request
+            if (request.StartsWith("*1") && request.Contains("$4") && request.EndsWith("PING"))
             {
                 byte[] response = Encoding.UTF8.GetBytes("+PONG\r\n");
                 await clientSocket.SendAsync(response, SocketFlags.None);
