@@ -1,3 +1,8 @@
+git add .
+
+> > git commit --allow-empty -m "Refactored to be more concice"
+> > git push origin master
+
 [![progress-banner](https://backend.codecrafters.io/progress/redis/044cfa71-ff3e-4cfe-b481-81bc209c7f20)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF)
 
 This is a starting point for C# solutions to the
