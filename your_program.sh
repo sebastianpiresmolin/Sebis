@@ -17,6 +17,18 @@ set -e # Exit early if any commands fail
   dotnet build --configuration Release --output /tmp/codecrafters-build-redis-csharp codecrafters-redis.csproj
 )
 
+# Extract the directory and dbfilename from the arguments
+DIR=""
+DBFILENAME=""
+
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --dir) DIR="$2"; shift ;;
+        --dbfilename) DBFILENAME="$2"; shift ;;
+    esac
+    shift
+done
+
 # Copied from .codecrafters/run.sh
 #
 # - Edit this to change how your program runs locally

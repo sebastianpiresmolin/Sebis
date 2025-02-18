@@ -10,6 +10,11 @@ Console.WriteLine("Server started. Waiting for clients to connect...");
 
 var store = new ConcurrentDictionary<string, string>(); // In-memory key-value store
 var expirationTimes = new ConcurrentDictionary<string, long>(); // Key expiration times
+
+var config = new ConcurrentDictionary<string, string>();
+if (args.Length >= 1) config["dir"] = args[0];
+if (args.Length >= 2) config["dbfilename"] = args[1];
+
 var commandHandler = new CommandHandler(store, expirationTimes);
 
 _ = Task.Run(async () =>

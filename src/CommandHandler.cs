@@ -8,11 +8,13 @@ public class CommandHandler
 {
     private readonly ConcurrentDictionary<string, string> store;
     private readonly ConcurrentDictionary<string, long> expirationTimes;
+    private readonly ConcurrentDictionary<string, string> config;
 
     public CommandHandler(ConcurrentDictionary<string, string> store, ConcurrentDictionary<string, long> expirationTimes)
     {
         this.store = store;
         this.expirationTimes = expirationTimes;
+        this.config = new ConcurrentDictionary<string, string>();
     }
 
     public async Task HandleCommand(string[] commandElements, Socket clientSocket)
@@ -24,6 +26,7 @@ public class CommandHandler
         }
 
         string command = commandElements[0].ToUpper();
+        // PING
         if (command == "PING")
         {
             byte[] response = Encoding.UTF8.GetBytes("+PONG\r\n");
@@ -37,6 +40,7 @@ public class CommandHandler
             await clientSocket.SendAsync(response, SocketFlags.None);
             Console.WriteLine($"Response sent: {message}");
         }
+        // SET
         else if (command == "SET" && (commandElements.Length == 3 || commandElements.Length == 5))
         {
             string key = commandElements[1];
@@ -57,6 +61,7 @@ public class CommandHandler
             byte[] response = Encoding.UTF8.GetBytes("+OK\r\n");
             await clientSocket.SendAsync(response, SocketFlags.None);
         }
+        // GET
         else if (command == "GET" && commandElements.Length == 2)
         {
             string key = commandElements[1];
@@ -71,6 +76,23 @@ public class CommandHandler
                 byte[] response = Encoding.UTF8.GetBytes("$-1\r\n");
                 await clientSocket.SendAsync(response, SocketFlags.None);
                 Console.WriteLine($"GET {key} -> (nil)");
+            }
+        }
+        // CONFIG GET
+        else if (command == "CONFIG" && commandElements.Length == 3 && commandElements[1].ToUpper() == "GET")
+        {
+            string configKey = commandElements[2];
+            if (config.TryGetValue(configKey, out string configValue))
+            {
+                byte[] response = Encoding.UTF8.GetBytes($"*2\r\n${configKey.Length}\r\n{configKey}\r\n${configValue.Length}\r\n{configValue}\r\n");
+                await clientSocket.SendAsync(response, SocketFlags.None);
+                Console.WriteLine($"CONFIG GET {configKey} -> {configValue}");
+            }
+            else
+            {
+                byte[] response = Encoding.UTF8.GetBytes("$-1\r\n");
+                await clientSocket.SendAsync(response, SocketFlags.None);
+                Console.WriteLine($"CONFIG GET {configKey} -> (nil)");
             }
         }
         else
