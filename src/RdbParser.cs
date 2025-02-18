@@ -127,7 +127,7 @@ public class RdbParser
         Console.WriteLine("- Value: " + ReadRedisString(reader));
     }
 
-    private long ReadLengthEncoded(BinaryReader reader)
+    rivate long ReadLengthEncoded(BinaryReader reader)
     {
         byte firstByte = reader.ReadByte();
         int prefix = firstByte >> 6;
@@ -139,22 +139,22 @@ public class RdbParser
                 {
                     0 => firstByte & 63,
                     1 => ((firstByte & 63) << 8) + reader.ReadByte(),
-                    2 => BitConverter.ToUInt32(new byte[]
+                    2 => BitConverter.ToUInt32(new byte[] // Changed to byte[]
                     {
-                    reader.ReadByte(),
-                    reader.ReadByte(),
-                    reader.ReadByte(),
-                    (byte)(firstByte & 63)
-                    }, 0),
+                    (byte)(firstByte & 63), // Explicit cast
+                    (byte)reader.ReadByte(),
+                    (byte)reader.ReadByte(),
+                    (byte)reader.ReadByte()
+                    }, 0), // Start index 0 for big-endian conversion
                     _ => throw new InvalidDataException()
                 };
             default:
                 int encodingType = firstByte & 63;
                 return encodingType switch
                 {
-                    0 => reader.ReadByte(),     // Handle 8-bit integer
-                    1 => reader.ReadUInt16(),   // Handle 16-bit integer
-                    2 => reader.ReadUInt32(),   // Handle 32-bit integer
+                    0 => -1,
+                    1 => -2,
+                    2 => -3,
                     3 => throw new NotSupportedException("LZF compression"),
                     _ => throw new NotSupportedException($"Unknown encoding {encodingType}")
                 };
@@ -168,8 +168,10 @@ public class RdbParser
         return length switch
         {
             > 0 => Encoding.UTF8.GetString(reader.ReadBytes((int)length)),
-            -1 => throw new NotSupportedException("Compressed strings"),
-            _ => length.ToString() // Convert numeric encodings to strings
+            -1 => reader.ReadByte().ToString(),      // Handle  8-bit ints like redis-bits value "64"
+            -2 => BitConverter.ToUInt16(reader.ReadBytes(2).Reverse().ToArray(), 0).ToString(),
+            -3 => BitConverter.ToUInt32(reader.ReadBytes(4).Reverse().ToArray(), 0).ToString(),
+            _ => throw new InvalidDataException($"Invalid length: {length}")
         };
     }
 }
