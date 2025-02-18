@@ -21,7 +21,7 @@ public class RdbParser
         using var reader = new BinaryReader(stream);
 
         ValidateHeader(reader);
-        Console.WriteLine($"RDB file header validated");
+        Console.WriteLine("RDB header validated");
 
         try
         {
@@ -77,24 +77,28 @@ public class RdbParser
 
         while (true)
         {
+            int currentPosition = (int)reader.BaseStream.Position;
             byte valueType = reader.ReadByte();
-            if (valueType == 0xFF) break;
+
+            if (valueType == 0xFF) break; // End of database
 
             long expiryMs = -1;
 
-            // Handle expiration timestamps
+            // Handle expiration timestamps first
             if (valueType == 0xFD) // Seconds precision
             {
                 expiryMs = reader.ReadUInt32() * 1000L;
                 valueType = reader.ReadByte();
+                Console.WriteLine($"Found expiration timestamp: {expiryMs}ms");
             }
             else if (valueType == 0xFC) // Milliseconds precision
             {
                 expiryMs = (long)reader.ReadUInt64();
                 valueType = reader.ReadByte();
+                Console.WriteLine($"Found expiration timestamp: {expiryMs}ms");
             }
 
-            if (valueType != 0x00) // Only handle strings for CodeCrafters
+            if (valueType != 0x00) // Only handle string values
                 continue;
 
             string key = ReadRedisString(reader);
@@ -104,10 +108,7 @@ public class RdbParser
             Console.WriteLine($"Loaded key: {key}");
 
             if (expiryMs != -1)
-            {
                 _expirations[key] = expiryMs;
-                Console.WriteLine($"Set expiry for {key}: {expiryMs}ms");
-            }
         }
     }
 
@@ -148,9 +149,9 @@ public class RdbParser
 
         return encodingType switch
         {
-            0 => reader.ReadByte(),       // 8-bit integer
-            1 => reader.ReadUInt16(),     // 16-bit integer
-            2 => reader.ReadUInt32(),     // 32-bit integer
+            0 => reader.ReadByte(),     // 8-bit integer
+            1 => reader.ReadUInt16(),   // 16-bit integer
+            2 => reader.ReadUInt32(),   // 32-bit integer
             3 => throw new NotSupportedException("LZF compression not supported"),
             _ => throw new NotSupportedException($"Unknown encoding: {encodingType}")
         };
@@ -160,13 +161,14 @@ public class RdbParser
     {
         long length = ReadLengthEncoded(reader);
 
-        // Handle integer encodings
-        if (length < 0)
-            return (-length).ToString();
+        if (length < -1 || length > int.MaxValue)
+            throw new InvalidDataException($"Invalid string length: {length}");
 
-        byte[] buffer = new byte[length];
-        reader.Read(buffer);
-
-        return Encoding.UTF8.GetString(buffer);
+        return length switch
+        {
+            -1 => throw new NotSupportedException("Compressed strings not supported"),
+            0 => string.Empty,
+            _ => Encoding.UTF8.GetString(reader.ReadBytes((int)length))
+        };
     }
 }
