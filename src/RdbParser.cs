@@ -1,137 +1,147 @@
-using System;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Text;
 
 public class RdbParser
 {
-    public Dictionary<string, string> Parse(string filePath)
+    private readonly ConcurrentDictionary<string, string> _store;
+    private readonly ConcurrentDictionary<string, long> _expirations;
+
+    public RdbParser(ConcurrentDictionary<string, string> store,
+                    ConcurrentDictionary<string, long> expirations)
     {
-        var keyValuePairs = new Dictionary<string, string>();
-        byte[] data = File.ReadAllBytes(filePath);
-        Console.WriteLine($"File read successfully. Data (hex): {BitConverter.ToString(data)}");
+        _store = store;
+        _expirations = expirations;
+    }
 
-        int index = 0;
-        try
+    public void Parse(string filePath)
+    {
+        var data = File.ReadAllBytes(filePath);
+        int index = 9; // Skip REDIS0011 header
+
+        while (index < data.Length)
         {
-            // Skip the REDIS header (9 bytes)
-            index += 9;
-
-            while (index < data.Length)
+            switch (data[index])
             {
-                if (data[index] == 0xFA) // Auxiliary field
-                {
-                    index = SkipAuxiliaryField(data, index);
-                }
-                else if (data[index] == 0xFE) // Database selector
-                {
-                    index = ParseDatabaseSection(data, index, keyValuePairs);
-                }
-                else if (data[index] == 0xFF) // EOF
-                {
+                case 0xFA: // Auxiliary field
+                    index = SkipAuxiliaryField(data, index + 1);
                     break;
-                }
-                else
-                {
-                    index++; // Skip unknown or unhandled sections
-                }
+
+                case 0xFE: // Database selector
+                    index = ProcessDatabaseSection(data, index + 1);
+                    break;
+
+                case 0xFF: // EOF
+                    return;
+
+                default:
+                    index++;
+                    break;
             }
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error parsing RDB data: {ex.Message}");
-            throw;
-        }
-
-        return keyValuePairs;
     }
 
-    private int SkipAuxiliaryField(byte[] data, int startIndex)
+    private int ProcessDatabaseSection(byte[] data, int index)
     {
-        int index = startIndex + 1;
-        // Skip key
-        index = SkipString(data, index);
-        // Skip value
-        index = SkipString(data, index);
-        return index;
-    }
-
-    private int ParseDatabaseSection(byte[] data, int startIndex, Dictionary<string, string> keyValuePairs)
-    {
-        int index = startIndex + 1;
-
         // Skip database number
         index = SkipLengthEncoded(data, index);
 
-        if (data[index] == 0xFB) // Resizedb
+        if (data[index] == 0xFB) // Resizedb info
         {
             index++;
-            index = SkipLengthEncoded(data, index); // Skip hash size
-            index = SkipLengthEncoded(data, index); // Skip expire size
+            index = SkipLengthEncoded(data, index); // hashSize
+            index = SkipLengthEncoded(data, index); // expireSize
         }
 
         while (index < data.Length && data[index] != 0xFF)
         {
-            if (data[index] == 0xFD || data[index] == 0xFC) // Expiry
+            long expiryMs = -1;
+
+            if (data[index] == 0xFD) // Expire seconds
             {
-                index += (data[index] == 0xFD) ? 5 : 9; // Skip expiry info
+                expiryMs = BitConverter.ToUInt32(data, index + 1) * 1000L;
+                index += 5;
+            }
+            else if (data[index] == 0xFC) // Expire milliseconds
+            {
+                expiryMs = BitConverter.ToInt64(data, index + 1);
+                index += 9;
             }
 
-            if (data[index] != 0x00) // Only handle string values for now
+            if (data[index] == 0x00) // String type
             {
-                throw new NotSupportedException("Non-string types are not supported yet.");
+                index++;
+                var key = ReadString(data, ref index);
+                var value = ReadString(data, ref index);
+
+                _store[key] = value;
+                if (expiryMs != -1)
+                {
+                    _expirations[key] = expiryMs;
+                }
             }
-            index++;
-
-            string key = ReadString(data, ref index);
-            string value = ReadString(data, ref index);
-
-            keyValuePairs[key] = value;
-            Console.WriteLine($"Loaded key-value pair: {key} => {value}");
+            else
+            {
+                index++;
+            }
         }
 
-        return index;
-    }
-
-    private int SkipLengthEncoded(byte[] data, int index)
-    {
-        byte firstByte = data[index];
-        int prefix = firstByte >> 6;
-
-        switch (prefix)
-        {
-            case 0: return index + 1;
-            case 1: return index + 2;
-            case 2: return index + 5;
-            default: throw new NotSupportedException("Special length encodings are not supported.");
-        }
-    }
-
-    private int SkipString(byte[] data, int index)
-    {
-        int length = ReadLength(data, ref index);
-        return index + length;
+        return index + 1; // Skip EOF byte
     }
 
     private string ReadString(byte[] data, ref int index)
     {
-        int length = ReadLength(data, ref index);
-        string result = Encoding.UTF8.GetString(data, index, length);
+        int length = ReadLength(data[index..], out int bytesConsumed);
+        index += bytesConsumed;
+
+        var value = Encoding.UTF8.GetString(data, index, length);
         index += length;
-        return result;
+        return value;
     }
 
-    private int ReadLength(byte[] data, ref int index)
+    private int ReadLength(byte[] data, out int bytesConsumed)
     {
-        byte firstByte = data[index++];
-        int prefix = firstByte >> 6;
+        byte firstByte = data;
+        bytesConsumed = 1;
 
-        switch (prefix)
+        switch (firstByte >> 6)
         {
-            case 0: return firstByte & 0x3F;
-            case 1: return ((firstByte & 0x3F) << 8) | data[index++];
-            case 2: return BitConverter.ToInt32(data, index);
-            default: throw new NotSupportedException("Special length encodings are not supported.");
+            case 0:
+                return firstByte & 0x3F;
+
+            case 1:
+                bytesConsumed++;
+                return ((firstByte & 0x3F) << 8) | data[1];
+
+            case 2:
+                bytesConsumed += 4;
+                return BitConverter.ToInt32(new byte[] {
+                    data[4], data[3], data[2], data[1] }, 0); // Big-endian
+
+            default:
+                throw new NotSupportedException("Special encodings not supported");
+        }
+    }
+
+    private int SkipAuxiliaryField(byte[] data, int index)
+    {
+        // Skip key
+        int keyLen = ReadLength(data[index..], out int consumed);
+        index += consumed + keyLen;
+
+        // Skip value 
+        int valLen = ReadLength(data[index..], out consumed);
+        return index + consumed + valLen;
+    }
+
+    private int SkipLengthEncoded(byte[] data, int index)
+    {
+        switch (data[index] >> 6)
+        {
+            case 0: return index + 1;
+            case 1: return index + 2;
+            case 2: return index + 5;
+            default: throw new NotSupportedException();
         }
     }
 }

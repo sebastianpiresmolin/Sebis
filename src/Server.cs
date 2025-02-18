@@ -25,28 +25,25 @@ for (int i = 0; i < args.Length; i += 2)
 if (config.TryGetValue("dir", out string dir) && config.TryGetValue("dbfilename", out string dbfilename))
 {
     string rdbPath = Path.Combine(dir, dbfilename);
-    Console.WriteLine($"Attempting to load RDB file: {rdbPath}");
+
     if (File.Exists(rdbPath))
     {
+        var rdbParser = new RdbParser(store, expirationTimes);
+
         try
         {
-            var rdbParser = new RdbParser();
-            var loadedData = rdbParser.Parse(rdbPath);
-            foreach (var kvp in loadedData)
-            {
-                store[kvp.Key] = kvp.Value;
-            }
+            rdbParser.Parse(rdbPath);
             Console.WriteLine($"Loaded {store.Count} keys from RDB file");
+
+            foreach (var key in store.Keys)
+            {
+                Console.WriteLine($"Loaded key: {key}");
+            }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error parsing RDB file: {ex.Message}");
-            Console.WriteLine(ex.StackTrace);
+            Console.WriteLine($"RDB parse error: {ex.Message}");
         }
-    }
-    else
-    {
-        Console.WriteLine($"RDB file not found: {rdbPath}");
     }
 }
 

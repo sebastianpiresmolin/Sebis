@@ -94,13 +94,21 @@ public class CommandHandler
         else if (command == "KEYS" && commandElements.Length == 2 && commandElements[1] == "*")
         {
             var keys = store.Keys.ToList();
-            string response = $"*{keys.Count}\r\n";
+
+            // Build RESP array response
+            var responseBuilder = new StringBuilder();
+            responseBuilder.Append($"*{keys.Count}\r\n"); // Array header
+
             foreach (var key in keys)
             {
-                response += $"${key.Length}\r\n{key}\r\n";
+                // Each key as bulk string
+                responseBuilder.Append($"${Encoding.UTF8.GetByteCount(key)}\r\n");
+                responseBuilder.Append($"{key}\r\n");
             }
-            byte[] responseBytes = Encoding.UTF8.GetBytes(response);
+
+            byte[] responseBytes = Encoding.UTF8.GetBytes(responseBuilder.ToString());
             await clientSocket.SendAsync(responseBytes, SocketFlags.None);
+            Console.WriteLine($"Responded to KEYS * with {keys.Count} items");
         }
         else
         {
