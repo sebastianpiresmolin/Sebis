@@ -22,30 +22,32 @@ for (int i = 0; i < args.Length; i += 2)
 }
 
 // Load RDB file if specified
-if (config.TryGetValue("dir", out string dir) && config.TryGetValue("dbfilename", out string dbfilename))
+if (config.TryGetValue("dir", out string dir) &&
+    config.TryGetValue("dbfilename", out string dbfilename))
 {
     string rdbPath = Path.Combine(dir, dbfilename);
 
     if (File.Exists(rdbPath))
     {
-        var rdbParser = new RdbParser(store, expirationTimes);
+        var parser = new RdbParser(store, expirationTimes);
 
         try
         {
-            rdbParser.Parse(rdbPath);
-            Console.WriteLine($"Loaded {store.Count} keys from RDB file");
+            parser.Parse(rdbPath);
+            Console.WriteLine($"Loaded {store.Count} keys from RDB");
 
             foreach (var key in store.Keys)
-            {
-                Console.WriteLine($"Loaded key: {key}");
-            }
+                Console.WriteLine($"- {key}");
+
+            Console.WriteLine("RDB parsing completed successfully");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"RDB parse error: {ex.Message}");
+            Console.WriteLine($"Error parsing RDB file: {ex.Message}");
         }
     }
 }
+
 
 var commandHandler = new CommandHandler(store, expirationTimes, config);
 
