@@ -1,118 +1,134 @@
 using System;
-using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 
-public class CommandHandler
+namespace codecrafters_redis.src
 {
-    private readonly ConcurrentDictionary<string, string> store;
-    private readonly ConcurrentDictionary<string, long> expirationTimes;
-    private readonly ConcurrentDictionary<string, string> config;
-
-    public CommandHandler(ConcurrentDictionary<string, string> store, ConcurrentDictionary<string, long> expirationTimes, ConcurrentDictionary<string, string> config)
+    internal class CommandHandler
     {
-        this.store = store;
-        this.expirationTimes = expirationTimes;
-        this.config = config;
-    }
-
-    public async Task HandleCommand(string[] commandElements, Socket clientSocket)
-    {
-        if (commandElements == null || commandElements.Length == 0)
+        public static void HandleCommandArray(Socket socket, string[] commands)
         {
-            Console.WriteLine("Invalid command.");
-            return;
-        }
-
-        string command = commandElements[0].ToUpper();
-        if (command == "PING")
-        {
-            byte[] response = Encoding.UTF8.GetBytes("+PONG\r\n");
-            await clientSocket.SendAsync(response, SocketFlags.None);
-            Console.WriteLine("Response sent: +PONG");
-        }
-        else if (command == "ECHO" && commandElements.Length == 2)
-        {
-            string message = commandElements[1];
-            byte[] response = Encoding.UTF8.GetBytes($"${message.Length}\r\n{message}\r\n");
-            await clientSocket.SendAsync(response, SocketFlags.None);
-            Console.WriteLine($"Response sent: {message}");
-        }
-        else if (command == "SET" && (commandElements.Length == 3 || commandElements.Length == 5))
-        {
-            string key = commandElements[1];
-            string value = commandElements[2];
-            store[key] = value;
-
-            if (commandElements.Length == 5 && commandElements[3].ToUpper() == "PX" && int.TryParse(commandElements[4], out int expirationTimeMs))
+            int pointer = 0;
+            while (pointer < commands.Length)
             {
-                expirationTimes[key] = new DateTimeOffset(DateTime.UtcNow.AddMilliseconds(expirationTimeMs)).ToUnixTimeSeconds();
-                Console.WriteLine($"SET {key} {value} with expiration {expirationTimeMs}ms");
+                //Console.WriteLine(commands[pointer]);
+                switch (commands[pointer])
+                {
+                    case "ECHO":
+                        EchoCommand(socket, commands[++pointer]);
+                        break;
+                    case "PING":
+                        PingCommand(socket);
+                        break;
+                    case "SET":
+                        {
+                            string key = commands[++pointer];
+                            string value = commands[++pointer];
+
+                            //check if SET getting PX argument
+                            if (pointer < commands.Length - 1 && commands[pointer + 1] == "px")
+                            {
+                                pointer++;
+                                int px = int.Parse(commands[++pointer]); // in milliseconds
+                                SetCommand(socket, key, value, px);
+                            }
+                            else
+                            {
+                                SetCommand(socket, key, value);
+                            }
+                        }
+                        break;
+                    case "GET":
+                        {
+                            string key = commands[++pointer];
+                            GetCommand(socket, key);
+                        }
+                        break;
+                    case "CONFIG":
+                        if (commands[pointer + 1] == "GET")
+                        {
+                            pointer++;
+                            string key = commands[++pointer];
+                            ConfigGetCommand(socket, key);
+                        }
+                        break;
+                    case "KEYS":
+                        if (commands[++pointer] == "*")
+                        {
+                            KeysCommand(socket);
+                        }
+                        break;
+                }
+                pointer++;
+            }
+        }
+
+        private static void EchoCommand(Socket socket, string echoText)
+        {
+            string msg = Resp.MakeBulkString(echoText);
+            Console.WriteLine($"Sending echo message - {msg}");
+            socket.SendAsync(Encoding.UTF8.GetBytes(msg));
+        }
+
+        private static void PingCommand(Socket socket)
+        {
+            string msg = Resp.MakeSimpleString("PONG");
+            Console.WriteLine($"Sending pong message - {msg}");
+            socket.SendAsync(Encoding.UTF8.GetBytes(msg));
+        }
+
+        private static void SetCommand(Socket socket, string key, string value, int px = -1)
+        {
+            if (px > 0)
+            {
+                Storage.Instance.AddToStorageWithExpiry(key, value, px);
+                Console.WriteLine($"Set key - {key} with value - {value}, px - {px}");
             }
             else
             {
-                expirationTimes.TryRemove(key, out _);
-                Console.WriteLine($"SET {key} {value} without expiration");
+                Storage.Instance.AddToData(key, value);
+                Console.WriteLine($"Set key - {key} with value - {value}");
             }
 
-            byte[] response = Encoding.UTF8.GetBytes("+OK\r\n");
-            await clientSocket.SendAsync(response, SocketFlags.None);
+            string msg = Resp.MakeSimpleString("OK");
+            Console.WriteLine($"Sending OK message - {msg}");
+            socket.SendAsync(Encoding.UTF8.GetBytes(msg));
         }
-        else if (command == "GET" && commandElements.Length == 2)
+
+        private static void GetCommand(Socket socket, string key)
         {
-            string key = commandElements[1];
-            if (store.TryGetValue(key, out string value))
+            if (Storage.Instance.TryGetFromDataByKey(key, out string value))
             {
-                byte[] response = Encoding.UTF8.GetBytes($"${value.Length}\r\n{value}\r\n");
-                await clientSocket.SendAsync(response, SocketFlags.None);
-                Console.WriteLine($"GET {key} -> {value}");
+                string msg = Resp.MakeBulkString(value);
+                Console.WriteLine($"Sending value message - {msg}");
+                socket.SendAsync(Encoding.UTF8.GetBytes(msg));
             }
             else
             {
-                byte[] response = Encoding.UTF8.GetBytes("$-1\r\n");
-                await clientSocket.SendAsync(response, SocketFlags.None);
-                Console.WriteLine($"GET {key} -> (nil)");
+                string msg = Resp.MakeNullBulkString();
+                Console.WriteLine($"Sending null value message - {msg}");
+                socket.SendAsync(Encoding.UTF8.GetBytes(msg));
             }
         }
-        else if (command == "CONFIG" && commandElements.Length == 3 && commandElements[1].ToUpper() == "GET")
+
+        private static void ConfigGetCommand(Socket socket, string key)
         {
-            string configKey = commandElements[2];
-            if (config.TryGetValue(configKey, out string configValue))
-            {
-                byte[] response = Encoding.UTF8.GetBytes($"*2\r\n${configKey.Length}\r\n{configKey}\r\n${configValue.Length}\r\n{configValue}\r\n");
-                await clientSocket.SendAsync(response, SocketFlags.None);
-                Console.WriteLine($"CONFIG GET {configKey} -> {configValue}");
-            }
-            else
-            {
-                byte[] response = Encoding.UTF8.GetBytes("$-1\r\n");
-                await clientSocket.SendAsync(response, SocketFlags.None);
-                Console.WriteLine($"CONFIG GET {configKey} -> (nil)");
-            }
+            string value = Rdb.Instance.GetConfigValueByKey(key);
+            string msg = Resp.MakeArray(new string[] { key, value });
+            Console.WriteLine($"Sending config value message - {msg}");
+            socket.SendAsync(Encoding.UTF8.GetBytes(msg));
         }
-        else if (command == "KEYS" && commandElements.Length == 2 && commandElements[1] == "*")
+
+        private static void KeysCommand(Socket socket)
         {
-            var keys = store.Keys.ToList();
-
-            // Build RESP array response
-            var responseBuilder = new StringBuilder();
-            responseBuilder.Append($"*{keys.Count}\r\n"); // Array header
-
-            foreach (var key in keys)
-            {
-                // Each key as bulk string
-                responseBuilder.Append($"${Encoding.UTF8.GetByteCount(key)}\r\n");
-                responseBuilder.Append($"{key}\r\n");
-            }
-
-            byte[] responseBytes = Encoding.UTF8.GetBytes(responseBuilder.ToString());
-            await clientSocket.SendAsync(responseBytes, SocketFlags.None);
-            Console.WriteLine($"Responded to KEYS * with {keys.Count} items");
-        }
-        else
-        {
-            Console.WriteLine($"Unknown command: {command}");
+            string[] keys = Storage.Instance.GetAllKeys();
+            string msg = Resp.MakeArray(keys);
+            Console.WriteLine("Sending all keys from data");
+            socket.SendAsync(Encoding.UTF8.GetBytes(msg));
         }
     }
 }

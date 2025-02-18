@@ -1,98 +1,45 @@
+using codecrafters_redis.src;
+using System;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using System.Collections.Concurrent;
 
-TcpListener server = new TcpListener(IPAddress.Any, 6379);
-
-server.Start();
-Console.WriteLine("Server started. Waiting for clients to connect...");
-
-var store = new ConcurrentDictionary<string, string>(); // In-memory key-value store
-var expirationTimes = new ConcurrentDictionary<string, long>(); // Key expiration times
-
-
-var config = new ConcurrentDictionary<string, string>(); // Store configuration values
-for (int i = 0; i < args.Length; i += 2)
+internal class Program
 {
-    if (i + 1 < args.Length)
+    private static void Main(string[] args)
     {
-        config[args[i].TrimStart('-')] = args[i + 1];
-    }
-}
-
-// Load RDB file if specified
-if (config.TryGetValue("dir", out string dir) &&
-    config.TryGetValue("dbfilename", out string dbfilename))
-{
-    string rdbPath = Path.Combine(dir, dbfilename);
-
-    if (File.Exists(rdbPath))
-    {
-        var parser = new RdbParser(store, expirationTimes);
-
-        try
+        //Config settings
+        for (int i = 0; i < args.Length; i += 2)
         {
-            parser.Parse(rdbPath);
-            Console.WriteLine($"Loaded {store.Count} keys from RDB");
-
-            foreach (var key in store.Keys)
-                Console.WriteLine($"- {key}");
-
-            Console.WriteLine("RDB parsing completed successfully");
+            Rdb.Instance.SetConfig(args[i].Substring(2), args[i + 1]);
         }
-        catch (Exception ex)
+        Rdb.Instance.ReadDb();
+
+        TcpListener server = new TcpListener(IPAddress.Any, 6379);
+        server.Start();
+
+        while (true)
         {
-            Console.WriteLine($"Error parsing RDB file: {ex.Message}");
+            Socket clientSocket = server.AcceptSocket(); // wait for client
+            Thread connThread = new Thread(() => { HandleConnection(clientSocket); });
+            connThread.Start();
         }
     }
-}
 
-
-var commandHandler = new CommandHandler(store, expirationTimes, config);
-
-_ = Task.Run(async () =>
-{
-    while (true)
+    private static void HandleConnection(Socket socket)
     {
-        foreach (var key in expirationTimes.Keys)
+        byte[] buffer = new byte[socket.ReceiveBufferSize];
+        while (socket.Connected)
         {
-            // Check if key expired and remove it
-            if (expirationTimes.TryGetValue(key, out long expirationTime)
-            && DateTime.UtcNow > DateTimeOffset.FromUnixTimeSeconds(expirationTime).UtcDateTime)
+            socket.Receive(buffer);
+            string[] commands = Resp.ParseMessage(Encoding.UTF8.GetString(buffer));
+
+            foreach (string command in commands)
             {
-                store.TryRemove(key, out _);
-                expirationTimes.TryRemove(key, out _);
-                Console.WriteLine($"Key {key} expired and removed.");
-            }
-        }
-        await Task.Delay(100);
-    }
-});
-
-while (true) // Accept multiple clients
-{
-    var clientSocket = await server.AcceptSocketAsync();
-    Console.WriteLine("Client connected.");
-
-    _ = Task.Run(async () => // Handle client in a separate task
-    {
-        byte[] buffer = new byte[1024];
-        while (clientSocket.Connected)
-        {
-            int bytesRead = await clientSocket.ReceiveAsync(buffer, SocketFlags.None);
-            if (bytesRead == 0)
-            {
-                Console.WriteLine("Client disconnected.");
-                clientSocket.Close();
-                break;
+                Console.WriteLine(command);
             }
 
-            string request = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
-            Console.WriteLine($"Received: {request}");
-
-            var commandElements = RESPParser.ParseRESPArray(request);
-            await commandHandler.HandleCommand(commandElements, clientSocket);
+            CommandHandler.HandleCommandArray(socket, commands);
         }
-    });
+    }
 }
