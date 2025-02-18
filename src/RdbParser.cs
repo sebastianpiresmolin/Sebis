@@ -53,11 +53,12 @@ public class RdbParser
             throw new InvalidDataException("Invalid RDB file format");
 
         string version = Encoding.ASCII.GetString(reader.ReadBytes(4));
+        Console.WriteLine($"RDB version: {version}");
     }
 
     private void ProcessDatabaseSection(BinaryReader reader, ConcurrentDictionary<string, string> store, ConcurrentDictionary<string, long> expirationTimes)
     {
-        var dbIndex = ReadLengthEncoded(reader);
+        ReadLengthEncoded(reader); // Read and ignore database number
 
         // Skip resizedb info if present
         byte next = reader.ReadByte();
@@ -71,37 +72,20 @@ public class RdbParser
             reader.BaseStream.Position--;
         }
 
-        while (true)
+        // Read key-value pair
+        byte valueType = reader.ReadByte();
+        if (valueType != 0) // 0 is for string encoding
         {
-            byte valueType = reader.ReadByte();
-            if (valueType == 0xFF) // EOF
-                break;
-
-            long expiryMs = -1;
-            if (valueType == 0xFD)
-            {
-                uint expirySeconds = reader.ReadUInt32();
-                expiryMs = expirySeconds * 1000;
-                valueType = reader.ReadByte();
-            }
-            else if (valueType == 0xFC)
-            {
-                expiryMs = (long)reader.ReadUInt64();
-                valueType = reader.ReadByte();
-            }
-
-            string key = ReadRedisString(reader);
-            string value = ReadRedisString(reader);
-
-            store[key] = value;
-            Console.WriteLine($"Loaded key: {key}, value: {value}");
-
-            if (expiryMs != -1)
-            {
-                expirationTimes[key] = expiryMs;
-            }
+            throw new NotSupportedException($"Unsupported value type: {valueType}");
         }
+
+        string key = ReadRedisString(reader);
+        string value = ReadRedisString(reader);
+
+        store[key] = value;
+        Console.WriteLine($"Loaded key: {key}, value: {value}");
     }
+
     private void SkipAuxiliaryFields(BinaryReader reader)
     {
         ReadRedisString(reader); // Skip key
@@ -135,8 +119,6 @@ public class RdbParser
                         return BitConverter.ToUInt16(reader.ReadBytes(2).Reverse().ToArray(), 0);
                     case 2: // 32 bit integer
                         return BitConverter.ToUInt32(reader.ReadBytes(4).Reverse().ToArray(), 0);
-                    case 3: // LZF compressed string
-                        throw new NotSupportedException("LZF compression not supported");
                     default:
                         throw new NotSupportedException($"Unknown string encoding: {encoding}");
                 }
@@ -148,8 +130,14 @@ public class RdbParser
     private string ReadRedisString(BinaryReader reader)
     {
         long length = ReadLengthEncoded(reader);
-        byte[] bytes = reader.ReadBytes((int)length);
-        return Encoding.UTF8.GetString(bytes);
+        if (length >= 0 && length <= int.MaxValue)
+        {
+            byte[] bytes = reader.ReadBytes((int)length);
+            return Encoding.UTF8.GetString(bytes);
+        }
+        else
+        {
+            throw new NotSupportedException($"Unsupported string length: {length}");
+        }
     }
 }
-
