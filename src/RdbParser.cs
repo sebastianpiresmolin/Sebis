@@ -31,25 +31,16 @@ public class RdbParser
 
                 switch (opcode)
                 {
-                    case 0xFF: // EOF
-                        return;
-
-                    case 0xFA: // Auxiliary field
-                        SkipAuxiliaryField(reader);
-                        break;
-
-                    case 0xFE: // Database selector
-                        ProcessDatabaseSection(reader);
-                        break;
-
-                    default:
-                        throw new InvalidDataException($"Unexpected opcode: 0x{opcode:X2}");
+                    case 0xFF: return; // EOF
+                    case 0xFA: SkipAuxiliaryField(reader); break;
+                    case 0xFE: ProcessDatabaseSection(reader); break;
+                    default: throw new InvalidDataException($"Unexpected opcode: {opcode:X2}");
                 }
             }
         }
         catch (EndOfStreamException)
         {
-            Console.WriteLine("Reached end of RDB file");
+            Console.WriteLine("End of RDB file reached");
         }
     }
 
@@ -57,10 +48,10 @@ public class RdbParser
     {
         byte[] header = reader.ReadBytes(5);
         if (Encoding.ASCII.GetString(header) != "REDIS")
-            throw new InvalidDataException("Invalid RDB file format");
+            throw new InvalidDataException("Invalid RDB header");
 
-        byte[] versionBytes = reader.ReadBytes(4);
-        Console.WriteLine($"RDB version: {Encoding.ASCII.GetString(versionBytes)}");
+        byte[] version = reader.ReadBytes(4);
+        Console.WriteLine($"RDB version: {Encoding.ASCII.GetString(version)}");
     }
 
     private void ProcessDatabaseSection(BinaryReader reader)
@@ -70,35 +61,31 @@ public class RdbParser
         // Handle resizedb info
         if (reader.PeekChar() == 0xFB)
         {
-            reader.ReadByte(); // Consume 0xFB
+            reader.ReadByte(); // Consume FB
             ReadLengthEncoded(reader); // hashSize
             ReadLengthEncoded(reader); // expireSize
         }
 
         while (true)
         {
-            int currentPosition = (int)reader.BaseStream.Position;
-            byte valueType = reader.ReadByte();
-
-            if (valueType == 0xFF) break; // End of database
+            byte marker = reader.ReadByte();
+            if (marker == 0xFF) break;
 
             long expiryMs = -1;
 
-            // Handle expiration timestamps first
-            if (valueType == 0xFD) // Seconds precision
+            // Handle expiration markers
+            if (marker == 0xFD) // Seconds precision
             {
                 expiryMs = reader.ReadUInt32() * 1000L;
-                valueType = reader.ReadByte();
-                Console.WriteLine($"Found expiration timestamp: {expiryMs}ms");
+                marker = reader.ReadByte();
             }
-            else if (valueType == 0xFC) // Milliseconds precision
+            else if (marker == 0xFC) // Milliseconds precision
             {
                 expiryMs = (long)reader.ReadUInt64();
-                valueType = reader.ReadByte();
-                Console.WriteLine($"Found expiration timestamp: {expiryMs}ms");
+                marker = reader.ReadByte();
             }
 
-            if (valueType != 0x00) // Only handle string values
+            if (marker != 0x00) // Only handle string values
                 continue;
 
             string key = ReadRedisString(reader);
@@ -114,8 +101,8 @@ public class RdbParser
 
     private void SkipAuxiliaryField(BinaryReader reader)
     {
-        ReadRedisString(reader); // Skip key
-        ReadRedisString(reader); // Skip value
+        ReadRedisString(reader); // Key
+        ReadRedisString(reader); // Value
         Console.WriteLine("Skipped auxiliary field");
     }
 
@@ -124,49 +111,35 @@ public class RdbParser
         byte firstByte = reader.ReadByte();
         int prefix = firstByte >> 6;
 
-        return prefix switch
+        switch (prefix)
         {
-            0 => firstByte & 0x3F,
-            1 => ((firstByte & 0x3F) << 8) | reader.ReadByte(),
-            2 => ReadFourByteLength(reader),
-            3 => HandleSpecialEncoding(firstByte, reader),
-            _ => throw new InvalidDataException("Invalid length encoding")
-        };
-    }
-
-    private long ReadFourByteLength(BinaryReader reader)
-    {
-        byte[] bytes = reader.ReadBytes(4);
-        if (BitConverter.IsLittleEndian)
-            Array.Reverse(bytes);
-
-        return BitConverter.ToUInt32(bytes);
-    }
-
-    private long HandleSpecialEncoding(byte firstByte, BinaryReader reader)
-    {
-        int encodingType = firstByte & 0x3F;
-
-        return encodingType switch
-        {
-            0 => reader.ReadByte(),     // 8-bit integer
-            1 => reader.ReadUInt16(),   // 16-bit integer
-            2 => reader.ReadUInt32(),   // 32-bit integer
-            3 => throw new NotSupportedException("LZF compression not supported"),
-            _ => throw new NotSupportedException($"Unknown encoding: {encodingType}")
-        };
+            case 0: return firstByte & 0x3F;
+            case 1: return ((firstByte & 0x3F) << 8) | reader.ReadByte();
+            case 2:
+                byte[] bytes = reader.ReadBytes(4);
+                if (BitConverter.IsLittleEndian) Array.Reverse(bytes);
+                return BitConverter.ToUInt32(bytes);
+            case 3:
+                int encodingType = firstByte & 0x3F;
+                return encodingType switch
+                {
+                    0 => reader.ReadByte(),
+                    1 => reader.ReadUInt16(),
+                    2 => reader.ReadUInt32(),
+                    _ => throw new NotSupportedException($"Special encoding {encodingType}")
+                };
+            default:
+                throw new InvalidDataException("Invalid length encoding");
+        }
     }
 
     private string ReadRedisString(BinaryReader reader)
     {
         long length = ReadLengthEncoded(reader);
 
-        if (length < -1 || length > int.MaxValue)
-            throw new InvalidDataException($"Invalid string length: {length}");
-
         return length switch
         {
-            -1 => throw new NotSupportedException("Compressed strings not supported"),
+            -1 => throw new NotSupportedException("Compressed strings"),
             0 => string.Empty,
             _ => Encoding.UTF8.GetString(reader.ReadBytes((int)length))
         };
