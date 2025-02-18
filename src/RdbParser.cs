@@ -63,34 +63,44 @@ public class RdbParser
 
         while (true)
         {
-            byte b = reader.ReadByte();
-            if (b == 0xFF || b == 0xFE)
-                break; // End of database or EOF
+            byte valueType = reader.ReadByte();
+            if (valueType == 0xFF) // EOF
+                break;
 
             long expiryMs = -1;
-            if (b == 0xFD)
+            if (valueType == 0xFD)
             {
                 uint expirySeconds = reader.ReadUInt32();
                 expiryMs = expirySeconds * 1000;
-                b = reader.ReadByte();
+                valueType = reader.ReadByte();
             }
-            else if (b == 0xFC)
+            else if (valueType == 0xFC)
             {
                 expiryMs = (long)reader.ReadUInt64();
-                b = reader.ReadByte();
+                valueType = reader.ReadByte();
             }
 
             string key = ReadRedisString(reader);
-            string value = ReadRedisString(reader);
+            string value;
+
+            if (valueType == 0) // String encoding
+            {
+                value = ReadRedisString(reader);
+            }
+            else
+            {
+                throw new NotSupportedException($"Unsupported value type: {valueType}");
+            }
 
             store[key] = value;
+            Console.WriteLine($"Loaded key: {key}, value: {value}");
+
             if (expiryMs != -1)
             {
                 expirationTimes[key] = expiryMs;
             }
         }
     }
-
     private void SkipAuxiliaryFields(BinaryReader reader)
     {
         ReadRedisString(reader); // Skip key
