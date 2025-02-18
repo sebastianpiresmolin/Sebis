@@ -27,14 +27,21 @@ public class RdbParser
         {
             while (true)
             {
+                int currentPosition = (int)reader.BaseStream.Position;
                 byte opcode = reader.ReadByte();
+                Console.WriteLine($"Processing opcode {opcode:X2} at position {currentPosition}");
 
                 switch (opcode)
                 {
                     case 0xFF: return; // EOF
-                    case 0xFA: SkipAuxiliaryField(reader); break;
-                    case 0xFE: ProcessDatabaseSection(reader); break;
-                    default: throw new InvalidDataException($"Unexpected opcode: {opcode:X2}");
+                    case 0xFA:
+                        SkipAuxiliaryField(reader);
+                        break;
+                    case 0xFE:
+                        ProcessDatabaseSection(reader);
+                        break;
+                    default:
+                        throw new InvalidDataException($"Unexpected opcode: {opcode:X2}");
                 }
             }
         }
@@ -47,63 +54,77 @@ public class RdbParser
     private void ValidateHeader(BinaryReader reader)
     {
         byte[] header = reader.ReadBytes(5);
-        if (Encoding.ASCII.GetString(header) != "REDIS")
+        if (!Encoding.ASCII.GetString(header).StartsWith("REDIS"))
             throw new InvalidDataException("Invalid RDB header");
 
-        byte[] version = reader.ReadBytes(4);
-        Console.WriteLine($"RDB version: {Encoding.ASCII.GetString(version)}");
+        Console.WriteLine($"RDB version: {Encoding.ASCII.GetString(reader.ReadBytes(4))}");
     }
 
     private void ProcessDatabaseSection(BinaryReader reader)
     {
-        ReadLengthEncoded(reader); // Skip database number
+        // Skip database number
+        _ = ReadLengthEncoded(reader);
 
-        // Handle resizedb info
+        // Handle resizedb information
         if (reader.PeekChar() == 0xFB)
         {
             reader.ReadByte(); // Consume FB
-            ReadLengthEncoded(reader); // hashSize
-            ReadLengthEncoded(reader); // expireSize
+            _ = ReadLengthEncoded(reader); // hash_size
+            _ = ReadLengthEncoded(reader); // expire_size
+            Console.WriteLine("Processed resize DB information");
         }
 
         while (true)
         {
+            int positionBeforeMarker = (int)reader.BaseStream.Position;
             byte marker = reader.ReadByte();
-            if (marker == 0xFF) break;
+
+            if (marker == 0xFF)
+            {
+                Console.WriteLine("End of DB section");
+                break;
+            }
 
             long expiryMs = -1;
 
-            // Handle expiration markers
-            if (marker == 0xFD) // Seconds precision
+            // Handle expiration timestamps
+            switch (marker)
             {
-                expiryMs = reader.ReadUInt32() * 1000L;
-                marker = reader.ReadByte();
-            }
-            else if (marker == 0xFC) // Milliseconds precision
-            {
-                expiryMs = (long)reader.ReadUInt64();
-                marker = reader.ReadByte();
+                case 0xFD:
+                    expiryMs = reader.ReadUInt32() * 1000L;
+                    marker = reader.ReadByte();
+                    Console.WriteLine($"Found expiration timestamp ({expiryMs}ms)");
+                    break;
+                case 0xFC:
+                    expiryMs = (long)reader.ReadUInt64();
+                    marker = reader.ReadByte();
+                    Console.WriteLine($"Found expiration timestamp ({expiryMs}ms)");
+                    break;
             }
 
-            if (marker != 0x00) // Only handle string values
+            // Only handle STRING types for CodeCrafters requirements
+            if (marker != 0x00)
+            {
+                Console.WriteLine($"Skipping non-string type {marker:X2} at position {positionBeforeMarker}");
                 continue;
+            }
 
             string key = ReadRedisString(reader);
             string value = ReadRedisString(reader);
 
             _store[key] = value;
-            Console.WriteLine($"Loaded key: {key}");
+            Console.WriteLine($"Loaded key '{key}' with{(expiryMs > -1 ? "" : "out")} expiration");
 
-            if (expiryMs != -1)
+            if (expiryMs > -1)
                 _expirations[key] = expiryMs;
         }
     }
 
     private void SkipAuxiliaryField(BinaryReader reader)
     {
-        ReadRedisString(reader); // Key
-        ReadRedisString(reader); // Value
-        Console.WriteLine("Skipped auxiliary field");
+        Console.WriteLine("Skipping auxiliary field:");
+        Console.WriteLine("- Key: " + ReadRedisString(reader));
+        Console.WriteLine("- Value: " + ReadRedisString(reader));
     }
 
     private long ReadLengthEncoded(BinaryReader reader)
@@ -113,35 +134,39 @@ public class RdbParser
 
         switch (prefix)
         {
-            case 0: return firstByte & 0x3F;
-            case 1: return ((firstByte & 0x3F) << 8) | reader.ReadByte();
-            case 2:
-                byte[] bytes = reader.ReadBytes(4);
-                if (BitConverter.IsLittleEndian) Array.Reverse(bytes);
-                return BitConverter.ToUInt32(bytes);
-            case 3:
-                int encodingType = firstByte & 0x3F;
-                return encodingType switch
+            case < 3:
+                return prefix switch
                 {
-                    0 => reader.ReadByte(),
-                    1 => reader.ReadUInt16(),
-                    2 => reader.ReadUInt32(),
-                    _ => throw new NotSupportedException($"Special encoding {encodingType}")
+                    0 => firstByte & 63,
+                    1 => ((firstByte & 63) << 8) + reader.ReadByte(),
+                    2 => BitConverter.ToUInt32(new byte[]
+                    {
+                    (byte)(firstByte & 63),  // Explicit cast to byte
+                    reader.ReadByte(),      // Already returns byte
+                    reader.ReadByte(),
+                    reader.ReadByte()
+                    }, 0),  // Start index 0 for little-endian conversion
+                    _ => throw new InvalidDataException()
                 };
             default:
-                throw new InvalidDataException("Invalid length encoding");
+                int encodingType = firstByte & 63;
+                return encodingType switch
+                {
+                    3 => throw new NotSupportedException("LZF compression"),
+                    _ => throw new NotSupportedException($"Unknown encoding {encodingType}")
+                };
         }
     }
-
     private string ReadRedisString(BinaryReader reader)
     {
         long length = ReadLengthEncoded(reader);
 
         return length switch
         {
-            -1 => throw new NotSupportedException("Compressed strings"),
+            > 0 => Encoding.UTF8.GetString(reader.ReadBytes((int)length)),
+            -1 => throw new NotSupportedException("Compressed strings not supported"),
             0 => string.Empty,
-            _ => Encoding.UTF8.GetString(reader.ReadBytes((int)length))
+            _ => throw new InvalidDataException($"Invalid string length: {length}")
         };
     }
 }
