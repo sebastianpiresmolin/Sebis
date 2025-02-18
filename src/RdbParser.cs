@@ -127,7 +127,7 @@ public class RdbParser
         Console.WriteLine("- Value: " + ReadRedisString(reader));
     }
 
-    rivate long ReadLengthEncoded(BinaryReader reader)
+    private long ReadLengthEncoded(BinaryReader reader)
     {
         byte firstByte = reader.ReadByte();
         int prefix = firstByte >> 6;
