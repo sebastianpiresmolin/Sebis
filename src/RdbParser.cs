@@ -12,20 +12,27 @@ public class RdbParser
 
         ValidateHeader(reader);
 
-        while (true)
+        try
         {
-            byte opcode = reader.ReadByte();
-            if (opcode == 0xFF) // EOF
-                break;
+            while (true)
+            {
+                byte opcode = reader.ReadByte();
+                if (opcode == 0xFF) // EOF
+                    break;
 
-            if (opcode == 0xFE) // Database selector
-            {
-                ProcessDatabaseSection(reader, store, expirationTimes);
+                if (opcode == 0xFE) // Database selector
+                {
+                    ProcessDatabaseSection(reader, store, expirationTimes);
+                }
+                else if (opcode == 0xFA) // Auxiliary metadata
+                {
+                    SkipAuxiliaryFields(reader);
+                }
             }
-            else if (opcode == 0xFA) // Auxiliary metadata
-            {
-                SkipAuxiliaryFields(reader);
-            }
+        }
+        catch (EndOfStreamException)
+        {
+            Console.WriteLine("Reached end of RDB file");
         }
     }
 

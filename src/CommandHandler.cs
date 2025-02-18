@@ -91,6 +91,17 @@ public class CommandHandler
                 Console.WriteLine($"CONFIG GET {configKey} -> (nil)");
             }
         }
+        else if (command == "KEYS" && commandElements.Length == 2 && commandElements[1] == "*")
+        {
+            var keys = store.Keys.ToList();
+            string response = $"*{keys.Count}\r\n";
+            foreach (var key in keys)
+            {
+                response += $"${key.Length}\r\n{key}\r\n";
+            }
+            byte[] responseBytes = Encoding.UTF8.GetBytes(response);
+            await clientSocket.SendAsync(responseBytes, SocketFlags.None);
+        }
         else
         {
             Console.WriteLine($"Unknown command: {command}");

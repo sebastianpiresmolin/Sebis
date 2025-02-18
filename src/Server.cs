@@ -27,8 +27,19 @@ if (config.TryGetValue("dir", out string dir) && config.TryGetValue("dbfilename"
     string rdbPath = Path.Combine(dir, dbfilename);
     if (File.Exists(rdbPath))
     {
-        var rdbParser = new RdbParser();
-        rdbParser.Parse(rdbPath, store, expirationTimes);
+        try
+        {
+            var rdbParser = new RdbParser();
+            rdbParser.Parse(rdbPath, store, expirationTimes);
+            Console.WriteLine($"Loaded {store.Count} keys from RDB file");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error parsing RDB file: {ex.Message}");
+            // Clear store and expirationTimes in case of error
+            store.Clear();
+            expirationTimes.Clear();
+        }
     }
 }
 
