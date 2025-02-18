@@ -1,22 +1,21 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-
-Console.WriteLine("Logs from your program will appear here!");
-
+using System.Collections.Concurrent;
 
 TcpListener server = new TcpListener(IPAddress.Any, 6379);
 
 server.Start();
 Console.WriteLine("Server started. Waiting for clients to connect...");
 
+var store = new ConcurrentDictionary<string, string>(); // In-memory key-value store
 
-while (true)
+while (true) // Accept multiple clients
 {
     var clientSocket = await server.AcceptSocketAsync();
     Console.WriteLine("Client connected.");
 
-    _ = Task.Run(async () =>
+    _ = Task.Run(async () => // Handle client in a separate task
     {
         byte[] buffer = new byte[1024];
         while (clientSocket.Connected)
@@ -32,7 +31,6 @@ while (true)
             string request = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
             Console.WriteLine($"Received: {request}");
 
-            // Parse RESP formatted request
             var commandElements = ParseRESPArray(request);
             if (commandElements != null && commandElements.Length > 0)
             {
@@ -50,9 +48,28 @@ while (true)
                     await clientSocket.SendAsync(response, SocketFlags.None);
                     Console.WriteLine($"Response sent: {message}");
                 }
-                else
+                else if (command == "SET" && commandElements.Length == 3)
                 {
-                    Console.WriteLine($"Unknown command: {command}");
+                    string key = commandElements[1];
+                    string value = commandElements[2];
+                    store[key] = value;
+                    byte[] response = Encoding.UTF8.GetBytes("+OK\r\n");
+                    await clientSocket.SendAsync(response, SocketFlags.None);
+                    Console.WriteLine($"SET {key} {value}");
+                }
+                else if (command == "GET" && commandElements.Length == 2)
+                {
+                    string key = commandElements[1];
+                    if (store.TryGetValue(key, out string value))
+                    {
+                        byte[] response = Encoding.UTF8.GetBytes($"${value.Length}\r\n{value}\r\n");
+                        await clientSocket.SendAsync(response, SocketFlags.None);
+                        Console.WriteLine($"GET {key} -> {value}");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Unknown command: {command}");
+                    }
                 }
             }
         }
