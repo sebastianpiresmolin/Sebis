@@ -31,12 +31,12 @@ if (config.TryGetValue("dir", out string dir) && config.TryGetValue("dbfilename"
         try
         {
             var rdbParser = new RdbParser();
-            rdbParser.Parse(rdbPath, store, expirationTimes);
-            Console.WriteLine($"Loaded {store.Count} keys from RDB file");
-            foreach (var key in store.Keys)
+            var loadedData = rdbParser.Parse(rdbPath);
+            foreach (var kvp in loadedData)
             {
-                Console.WriteLine($"Loaded key: {key}");
+                store[kvp.Key] = kvp.Value;
             }
+            Console.WriteLine($"Loaded {store.Count} keys from RDB file");
         }
         catch (Exception ex)
         {

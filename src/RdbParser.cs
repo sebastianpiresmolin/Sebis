@@ -5,139 +5,133 @@ using System.Text;
 
 public class RdbParser
 {
-    public void Parse(string filePath, ConcurrentDictionary<string, string> store, ConcurrentDictionary<string, long> expirationTimes)
+    public Dictionary<string, string> Parse(string filePath)
     {
-        using var stream = File.OpenRead(filePath);
-        using var reader = new BinaryReader(stream);
+        var keyValuePairs = new Dictionary<string, string>();
+        byte[] data = File.ReadAllBytes(filePath);
+        Console.WriteLine($"File read successfully. Data (hex): {BitConverter.ToString(data)}");
 
-        ValidateHeader(reader);
-        Console.WriteLine("RDB header validated successfully");
-
+        int index = 0;
         try
         {
-            while (true)
-            {
-                byte opcode = reader.ReadByte();
-                if (opcode == 0xFF) // EOF
-                {
-                    Console.WriteLine("Reached EOF marker");
-                    break;
-                }
+            // Skip the REDIS header (9 bytes)
+            index += 9;
 
-                if (opcode == 0xFE) // Database selector
+            while (index < data.Length)
+            {
+                if (data[index] == 0xFA) // Auxiliary field
                 {
-                    Console.WriteLine("Processing database section");
-                    ProcessDatabaseSection(reader, store, expirationTimes);
+                    index = SkipAuxiliaryField(data, index);
                 }
-                else if (opcode == 0xFA) // Auxiliary metadata
+                else if (data[index] == 0xFE) // Database selector
                 {
-                    Console.WriteLine("Skipping auxiliary fields");
-                    SkipAuxiliaryFields(reader);
+                    index = ParseDatabaseSection(data, index, keyValuePairs);
+                }
+                else if (data[index] == 0xFF) // EOF
+                {
+                    break;
                 }
                 else
                 {
-                    Console.WriteLine($"Unknown opcode: {opcode:X2}");
+                    index++; // Skip unknown or unhandled sections
                 }
             }
         }
-        catch (EndOfStreamException)
+        catch (Exception ex)
         {
-            Console.WriteLine("Reached end of RDB file");
-        }
-    }
-
-    private void ValidateHeader(BinaryReader reader)
-    {
-        string magic = Encoding.ASCII.GetString(reader.ReadBytes(5));
-        if (magic != "REDIS")
-            throw new InvalidDataException("Invalid RDB file format");
-
-        string version = Encoding.ASCII.GetString(reader.ReadBytes(4));
-        Console.WriteLine($"RDB version: {version}");
-    }
-
-    private void ProcessDatabaseSection(BinaryReader reader, ConcurrentDictionary<string, string> store, ConcurrentDictionary<string, long> expirationTimes)
-    {
-        ReadLengthEncoded(reader); // Read and ignore database number
-
-        // Skip resizedb info if present
-        byte next = reader.ReadByte();
-        if (next == 0xFB)
-        {
-            ReadLengthEncoded(reader); // hashSize
-            ReadLengthEncoded(reader); // expireSize
-        }
-        else
-        {
-            reader.BaseStream.Position--;
+            Console.WriteLine($"Error parsing RDB data: {ex.Message}");
+            throw;
         }
 
-        // Read key-value pair
-        byte valueType = reader.ReadByte();
-        if (valueType != 0) // 0 is for string encoding
+        return keyValuePairs;
+    }
+
+    private int SkipAuxiliaryField(byte[] data, int startIndex)
+    {
+        int index = startIndex + 1;
+        // Skip key
+        index = SkipString(data, index);
+        // Skip value
+        index = SkipString(data, index);
+        return index;
+    }
+
+    private int ParseDatabaseSection(byte[] data, int startIndex, Dictionary<string, string> keyValuePairs)
+    {
+        int index = startIndex + 1;
+
+        // Skip database number
+        index = SkipLengthEncoded(data, index);
+
+        if (data[index] == 0xFB) // Resizedb
         {
-            throw new NotSupportedException($"Unsupported value type: {valueType}");
+            index++;
+            index = SkipLengthEncoded(data, index); // Skip hash size
+            index = SkipLengthEncoded(data, index); // Skip expire size
         }
 
-        string key = ReadRedisString(reader);
-        string value = ReadRedisString(reader);
+        while (index < data.Length && data[index] != 0xFF)
+        {
+            if (data[index] == 0xFD || data[index] == 0xFC) // Expiry
+            {
+                index += (data[index] == 0xFD) ? 5 : 9; // Skip expiry info
+            }
 
-        store[key] = value;
-        Console.WriteLine($"Loaded key: {key}, value: {value}");
+            if (data[index] != 0x00) // Only handle string values for now
+            {
+                throw new NotSupportedException("Non-string types are not supported yet.");
+            }
+            index++;
+
+            string key = ReadString(data, ref index);
+            string value = ReadString(data, ref index);
+
+            keyValuePairs[key] = value;
+            Console.WriteLine($"Loaded key-value pair: {key} => {value}");
+        }
+
+        return index;
     }
 
-    private void SkipAuxiliaryFields(BinaryReader reader)
+    private int SkipLengthEncoded(byte[] data, int index)
     {
-        ReadRedisString(reader); // Skip key
-        ReadRedisString(reader); // Skip value
-    }
-
-    private long ReadLengthEncoded(BinaryReader reader)
-    {
-        byte firstByte = reader.ReadByte();
+        byte firstByte = data[index];
         int prefix = firstByte >> 6;
 
         switch (prefix)
         {
-            case 0:
-                return firstByte & 0x3F;
-            case 1:
-                byte secondByte = reader.ReadByte();
-                return ((firstByte & 0x3F) << 8) | secondByte;
-            case 2:
-                byte[] fourBytes = reader.ReadBytes(4);
-                if (BitConverter.IsLittleEndian)
-                    Array.Reverse(fourBytes);
-                return BitConverter.ToUInt32(fourBytes, 0);
-            case 3:
-                int encoding = firstByte & 0x3F;
-                switch (encoding)
-                {
-                    case 0: // 8 bit integer
-                        return reader.ReadByte();
-                    case 1: // 16 bit integer
-                        return BitConverter.ToUInt16(reader.ReadBytes(2).Reverse().ToArray(), 0);
-                    case 2: // 32 bit integer
-                        return BitConverter.ToUInt32(reader.ReadBytes(4).Reverse().ToArray(), 0);
-                    default:
-                        throw new NotSupportedException($"Unknown string encoding: {encoding}");
-                }
-            default:
-                throw new InvalidDataException("Invalid length encoding");
+            case 0: return index + 1;
+            case 1: return index + 2;
+            case 2: return index + 5;
+            default: throw new NotSupportedException("Special length encodings are not supported.");
         }
     }
 
-    private string ReadRedisString(BinaryReader reader)
+    private int SkipString(byte[] data, int index)
     {
-        long length = ReadLengthEncoded(reader);
-        if (length >= 0 && length <= int.MaxValue)
+        int length = ReadLength(data, ref index);
+        return index + length;
+    }
+
+    private string ReadString(byte[] data, ref int index)
+    {
+        int length = ReadLength(data, ref index);
+        string result = Encoding.UTF8.GetString(data, index, length);
+        index += length;
+        return result;
+    }
+
+    private int ReadLength(byte[] data, ref int index)
+    {
+        byte firstByte = data[index++];
+        int prefix = firstByte >> 6;
+
+        switch (prefix)
         {
-            byte[] bytes = reader.ReadBytes((int)length);
-            return Encoding.UTF8.GetString(bytes);
-        }
-        else
-        {
-            throw new NotSupportedException($"Unsupported string length: {length}");
+            case 0: return firstByte & 0x3F;
+            case 1: return ((firstByte & 0x3F) << 8) | data[index++];
+            case 2: return BitConverter.ToInt32(data, index);
+            default: throw new NotSupportedException("Special length encodings are not supported.");
         }
     }
 }
