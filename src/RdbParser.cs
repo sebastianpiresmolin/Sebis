@@ -11,6 +11,7 @@ public class RdbParser
         using var reader = new BinaryReader(stream);
 
         ValidateHeader(reader);
+        Console.WriteLine("RDB header validated successfully");
 
         try
         {
@@ -18,15 +19,24 @@ public class RdbParser
             {
                 byte opcode = reader.ReadByte();
                 if (opcode == 0xFF) // EOF
+                {
+                    Console.WriteLine("Reached EOF marker");
                     break;
+                }
 
                 if (opcode == 0xFE) // Database selector
                 {
+                    Console.WriteLine("Processing database section");
                     ProcessDatabaseSection(reader, store, expirationTimes);
                 }
                 else if (opcode == 0xFA) // Auxiliary metadata
                 {
+                    Console.WriteLine("Skipping auxiliary fields");
                     SkipAuxiliaryFields(reader);
+                }
+                else
+                {
+                    Console.WriteLine($"Unknown opcode: {opcode:X2}");
                 }
             }
         }
@@ -81,16 +91,7 @@ public class RdbParser
             }
 
             string key = ReadRedisString(reader);
-            string value;
-
-            if (valueType == 0) // String encoding
-            {
-                value = ReadRedisString(reader);
-            }
-            else
-            {
-                throw new NotSupportedException($"Unsupported value type: {valueType}");
-            }
+            string value = ReadRedisString(reader);
 
             store[key] = value;
             Console.WriteLine($"Loaded key: {key}, value: {value}");
