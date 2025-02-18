@@ -10,6 +10,7 @@ TcpListener server = new TcpListener(IPAddress.Any, 6379);
 server.Start();
 Console.WriteLine("Server started. Waiting for clients to connect...");
 
+
 while (true)
 {
     var clientSocket = await server.AcceptSocketAsync();
