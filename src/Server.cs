@@ -9,6 +9,26 @@ server.Start();
 Console.WriteLine("Server started. Waiting for clients to connect...");
 
 var store = new ConcurrentDictionary<string, string>(); // In-memory key-value store
+var expirationTimes = new ConcurrentDictionary<string, long>(); // Key expiration times
+
+_ = Task.Run(async () =>
+{
+    while (true)
+    {
+        foreach (var key in expirationTimes.Keys)
+        {
+            // Check if key expired and remove it
+            if (expirationTimes.TryGetValue(key, out long expirationTime)
+            && DateTime.UtcNow > DateTimeOffset.FromUnixTimeSeconds(expirationTime).UtcDateTime)
+            {
+                store.TryRemove(key, out _);
+                expirationTimes.TryRemove(key, out _);
+                Console.WriteLine($"Key {key} expired and removed.");
+            }
+        }
+        await Task.Delay(100); // Check every 100ms
+    }
+});
 
 while (true) // Accept multiple clients
 {
@@ -48,14 +68,26 @@ while (true) // Accept multiple clients
                     await clientSocket.SendAsync(response, SocketFlags.None);
                     Console.WriteLine($"Response sent: {message}");
                 }
-                else if (command == "SET" && commandElements.Length == 3)
+                else if (command == "SET" && (commandElements.Length == 3 || commandElements.Length == 5))
                 {
                     string key = commandElements[1];
                     string value = commandElements[2];
                     store[key] = value;
+
+                    if (commandElements.Length == 5 && commandElements[3].ToUpper() ==
+                    "PX" && int.TryParse(commandElements[4], out int expirationTimeMs))
+                    {
+                        expirationTimes[key] = new DateTimeOffset(DateTime.UtcNow.AddMilliseconds(expirationTimeMs)).ToUnixTimeSeconds();
+                        Console.WriteLine($"SET {key} {value} with expiration {expirationTimeMs}ms");
+                    }
+                    else
+                    {
+                        expirationTimes.TryRemove(key, out _);
+                        Console.WriteLine($"SET {key} {value} without expiration");
+                    }
+
                     byte[] response = Encoding.UTF8.GetBytes("+OK\r\n");
                     await clientSocket.SendAsync(response, SocketFlags.None);
-                    Console.WriteLine($"SET {key} {value}");
                 }
                 else if (command == "GET" && commandElements.Length == 2)
                 {
@@ -68,8 +100,14 @@ while (true) // Accept multiple clients
                     }
                     else
                     {
-                        Console.WriteLine($"Unknown command: {command}");
+                        byte[] response = Encoding.UTF8.GetBytes("$-1\r\n");
+                        await clientSocket.SendAsync(response, SocketFlags.None);
+                        Console.WriteLine($"GET {key} -> (nil)");
                     }
+                }
+                else
+                {
+                    Console.WriteLine($"Unknown command: {command}");
                 }
             }
         }
