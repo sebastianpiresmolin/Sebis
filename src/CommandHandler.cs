@@ -101,17 +101,14 @@ namespace codecrafters_redis.src
 
         private static void GetCommand(Socket socket, string key)
         {
-            if (Storage.Instance.TryGetFromDataByKey(key, out string value))
+            if (Storage.Instance.TryGetFromDataByKey(key, out string? value) && value != null)
             {
                 string msg = Resp.MakeBulkString(value);
-                Console.WriteLine($"Sending value message - {msg}");
                 socket.SendAsync(Encoding.UTF8.GetBytes(msg));
             }
             else
             {
-                string msg = Resp.MakeNullBulkString();
-                Console.WriteLine($"Sending null value message - {msg}");
-                socket.SendAsync(Encoding.UTF8.GetBytes(msg));
+                socket.SendAsync(Encoding.UTF8.GetBytes("$-1\r\n"));
             }
         }
 
