@@ -38,24 +38,14 @@ namespace codecrafters_redis.src
 
         public bool TryGetFromDataByKey(string key, out string value)
         {
-            if (data.ContainsKey(key))
+            if (expiryTimes.TryGetValue(key, out DateTime expiry) &&
+                DateTime.UtcNow > expiry)
             {
-                if (expiryTimes.ContainsKey(key) && DateTime.UtcNow > expiryTimes[key])
-                {
-                    Console.WriteLine($"Key - {key} has expired at {expiryTimes[key]}");
-                    RemoveFromData(key);
-                    value = "";
-                    return false;
-                }
-
-                value = data[key];
-                return true;
-            }
-            else
-            {
-                value = "";
+                RemoveFromData(key);
+                value = null;
                 return false;
             }
+            return data.TryGetValue(key, out value);
         }
 
         public void RemoveFromData(string key)
@@ -78,9 +68,11 @@ namespace codecrafters_redis.src
             return data;
         }
 
-        private void ExpiryTimer(int expiry, string key)
+        private void ExpiryTimer(int expiryMs, string key)
         {
-            Thread.Sleep(expiry);
+            var expiryTime = DateTime.UtcNow.AddMilliseconds(expiryMs);
+            var delay = (int)(expiryTime - DateTime.UtcNow).TotalMilliseconds;
+            Thread.Sleep(delay > 0 ? delay : 0);
             RemoveFromData(key);
         }
 
