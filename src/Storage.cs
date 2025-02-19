@@ -10,7 +10,8 @@ namespace codecrafters_redis.src
     {
         public static readonly Storage Instance = new Storage();
 
-        private Dictionary<string, string> data = new Dictionary<string, string>(); // Maybe need to use MemoryCache
+        private Dictionary<string, string> data = new Dictionary<string, string>();
+        private Dictionary<string, DateTime> expiryTimes = new Dictionary<string, DateTime>();
 
         public void AddToData(string key, string value)
         {
@@ -27,14 +28,23 @@ namespace codecrafters_redis.src
         public void AddToStorageWithExpiry(string key, string value, int expiry)
         {
             AddToData(key, value);
+            DateTime expiryTime = DateTime.UtcNow.AddMilliseconds(expiry);
+            expiryTimes[key] = expiryTime;
 
-            Task.Delay(expiry).ContinueWith(t => { RemoveFromData(key); });
+            Task.Run(() => ExpiryTimer(expiry, key));
         }
 
         public bool TryGetFromDataByKey(string key, out string value)
         {
             if (data.ContainsKey(key))
             {
+                if (expiryTimes.ContainsKey(key) && DateTime.UtcNow > expiryTimes[key])
+                {
+                    RemoveFromData(key);
+                    value = "";
+                    return false;
+                }
+
                 value = data[key];
                 return true;
             }
@@ -47,19 +57,17 @@ namespace codecrafters_redis.src
 
         public void RemoveFromData(string key)
         {
-            if (!data.ContainsKey(key))
-            {
-                return;
-            }
-            else
+            if (data.ContainsKey(key))
             {
                 data.Remove(key);
+                expiryTimes.Remove(key);
             }
         }
 
         public void ClearAllData()
         {
             data.Clear();
+            expiryTimes.Clear();
         }
 
         public Dictionary<string, string> GetAllData()
