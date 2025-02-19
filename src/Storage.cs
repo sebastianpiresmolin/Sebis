@@ -18,7 +18,7 @@ namespace codecrafters_redis.src
         {
             // Cleanup expired items every 30 seconds
             cleanupTimer = new Timer(_ => CleanupExpiredItems(), null,
-                TimeSpan.Zero, TimeSpan.FromSeconds(30));
+                TimeSpan.Zero, TimeSpan.FromSeconds(0.1));
         }
 
         public void AddToData(string key, string value)
