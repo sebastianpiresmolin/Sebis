@@ -31,6 +31,8 @@ namespace codecrafters_redis.src
             DateTime expiryTime = DateTime.UtcNow.AddMilliseconds(expiry);
             expiryTimes[key] = expiryTime;
 
+            Console.WriteLine($"Added key - {key} with expiry time - {expiryTime}");
+
             Task.Run(() => ExpiryTimer(expiry, key));
         }
 
@@ -40,6 +42,7 @@ namespace codecrafters_redis.src
             {
                 if (expiryTimes.ContainsKey(key) && DateTime.UtcNow > expiryTimes[key])
                 {
+                    Console.WriteLine($"Key - {key} has expired at {expiryTimes[key]}");
                     RemoveFromData(key);
                     value = "";
                     return false;
