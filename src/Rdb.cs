@@ -25,87 +25,80 @@ namespace codecrafters_redis.src
 
         public void ReadDb()
         {
-            if (!config.ContainsKey("dir") && !config.ContainsKey("dbfilename"))
-            {
+            if (!config.ContainsKey("dir") || !config.ContainsKey("dbfilename"))
                 return;
-            }
-            if (!File.Exists($"{config["dir"]}/{config["dbfilename"]}"))
-            {
-                return;
-            }
-            string hexString;
-            using (FileStream fstream = File.OpenRead($"{config["dir"]}/{config["dbfilename"]}"))
-            {
-                byte[] buffer = new byte[fstream.Length];
-                fstream.Read(buffer, 0, buffer.Length);
-                hexString = BitConverter.ToString(buffer).Replace("-", "");
-            }
 
-            int n = Convert.ToInt32($"0x{hexString.Substring(hexString.IndexOf("FB") + 2, 2)}", 16); //size of table
-            Console.WriteLine(n);
-            string dbHexString = hexString[(hexString.IndexOf("FB") + 6)..];
-            for (int i = 0; i < n; i++)
+            string path = $"{config["dir"]}/{config["dbfilename"]}";
+            if (!File.Exists(path)) return;
+
+            byte[] data = File.ReadAllBytes(path);
+            string hexString = BitConverter.ToString(data).Replace("-", "");
+
+            int fbIndex = hexString.IndexOf("FB");
+            if (fbIndex == -1) return;
+
+            int count = Convert.ToInt32(hexString.Substring(fbIndex + 4, 2), 16);
+            string dbSection = hexString[(fbIndex + 6)..];
+
+            for (int i = 0; i < count; i++)
             {
-                string indicator = dbHexString.Substring(0, 2);
-                switch (indicator)
+                if (dbSection.StartsWith("00")) // String type
                 {
-                    case "00":
-                        ReadKeyValue(ref dbHexString);
-                        break;
-                    case "FC":
-                        {
-                            dbHexString = dbHexString[2..];
-                            int milliseconds = Int32.Parse(dbHexString.Substring(0, 8), System.Globalization.NumberStyles.HexNumber);
-                            dbHexString = dbHexString[8..];
-                            ReadKeyValue(ref dbHexString, milliseconds);
-                            break;
-                        }
-                    case "FD":
-                        {
-                            dbHexString = dbHexString[2..];
-                            int milliseconds = Int32.Parse(dbHexString.Substring(0, 4), System.Globalization.NumberStyles.HexNumber);
-                            dbHexString = dbHexString[4..];
-                            ReadKeyValue(ref dbHexString, milliseconds);
-                            break;
-                        }
+                    dbSection = ProcessKeyValue(dbSection);
+                }
+                else if (dbSection.StartsWith("FC")) // Millisecond expiry
+                {
+                    dbSection = dbSection[2..];
+                    long expiryMs = long.Parse(dbSection[..16], NumberStyles.HexNumber);
+                    dbSection = dbSection[16..];
+                    dbSection = ProcessKeyValue(dbSection, expiryMs);
+                }
+                else if (dbSection.StartsWith("FD")) // Second expiry
+                {
+                    dbSection = dbSection[2..];
+                    long expiryMs = long.Parse(dbSection[..8], NumberStyles.HexNumber) * 1000;
+                    dbSection = dbSection[8..];
+                    dbSection = ProcessKeyValue(dbSection, expiryMs);
                 }
             }
         }
 
-        private void ReadKeyValue(ref string dbHexString, int milliseconds = -1)
+        private string ProcessKeyValue(string hexData, long expiryMs = -1)
         {
-            dbHexString = dbHexString[2..];
-            int length = Convert.ToInt32($"0x{dbHexString.Substring(0, 2)}", 16);
-            dbHexString = dbHexString[2..];
-            string key = FromHexToString(dbHexString.Substring(0, length * 2));
-            dbHexString = dbHexString[(length * 2)..];
-            length = Convert.ToInt32($"0x{dbHexString.Substring(0, 2)}", 16);
-            dbHexString = dbHexString[2..];
-            string value = FromHexToString(dbHexString.Substring(0, length * 2));
-            dbHexString = dbHexString[(length * 2)..];
+            hexData = hexData[2..]; // Skip value type
 
-            Console.WriteLine(key);
-            Console.WriteLine(value);
-            Console.WriteLine(milliseconds);
+            int keyLen = Convert.ToInt32(hexData[..2], 16);
+            hexData = hexData[2..];
 
-            if (milliseconds > 0)
+            string key = HexToString(hexData[..(keyLen * 2)]);
+            hexData = hexData[(keyLen * 2)..];
+
+            int valLen = Convert.ToInt32(hexData[..2], 16);
+            hexData = hexData[2..];
+
+            string value = HexToString(hexData[..(valLen * 2)]);
+            hexData = hexData[(valLen * 2)..];
+
+            if (expiryMs > 0)
             {
-                Storage.Instance.AddToStorageWithExpiry(key, value, milliseconds);
+                Storage.Instance.AddToStorageWithExpiry(key, value, (int)expiryMs);
+                Console.WriteLine($"Added {key} with {expiryMs}ms expiry");
             }
             else
             {
                 Storage.Instance.AddToData(key, value);
             }
+
+            return hexData;
         }
 
-        private static string FromHexToString(string hexString)
+        private static string HexToString(string hex)
         {
-            byte[] raw = new byte[hexString.Length / 2];
-            for (int i = 0; i < raw.Length; i++)
-            {
-                raw[i] = Convert.ToByte(hexString.Substring(i * 2, 2), 16);
-            }
-            return Encoding.UTF8.GetString(raw);
+            byte[] bytes = new byte[hex.Length / 2];
+            for (int i = 0; i < bytes.Length; i++)
+                bytes[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16);
+
+            return Encoding.UTF8.GetString(bytes);
         }
     }
 }
