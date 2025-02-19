@@ -8,35 +8,26 @@ namespace codecrafters_redis.src
 {
     class Storage
     {
-        public static readonly Storage Instance = new Storage();
-
-        private Dictionary<string, string> data = new Dictionary<string, string>();
-        private Dictionary<string, DateTime> expiryTimes = new Dictionary<string, DateTime>();
+        public static readonly Storage Instance = new();
+        private readonly Dictionary<string, string> data = new();
+        private readonly Dictionary<string, DateTime> expiryTimes = new();
 
         public void AddToData(string key, string value)
         {
-            if (data.ContainsKey(key))
-            {
-                data[key] = value;
-            }
-            else
-            {
-                data.Add(key, value);
-            }
+            data[key] = value;
+            expiryTimes.Remove(key);
         }
 
-        public void AddToStorageWithExpiry(string key, string value, int expiry)
+        public void AddToStorageWithExpiry(string key, string value, int expiryMs)
         {
-            AddToData(key, value);
-            DateTime expiryTime = DateTime.UtcNow.AddMilliseconds(expiry);
+            data[key] = value;
+            var expiryTime = DateTime.UtcNow.AddMilliseconds(expiryMs);
             expiryTimes[key] = expiryTime;
 
-            Console.WriteLine($"Added key - {key} with expiry time - {expiryTime}");
-
-            Task.Run(() => ExpiryTimer(expiry, key));
+            Task.Run(() => ExpiryTimer(expiryMs, key));
         }
 
-        public bool TryGetFromDataByKey(string key, out string value)
+        public bool TryGetFromDataByKey(string key, out string? value)
         {
             if (expiryTimes.TryGetValue(key, out DateTime expiry) &&
                 DateTime.UtcNow > expiry)
@@ -68,11 +59,9 @@ namespace codecrafters_redis.src
             return data;
         }
 
-        private void ExpiryTimer(int expiryMs, string key)
+        private void ExpiryTimer(int delayMs, string key)
         {
-            var expiryTime = DateTime.UtcNow.AddMilliseconds(expiryMs);
-            var delay = (int)(expiryTime - DateTime.UtcNow).TotalMilliseconds;
-            Thread.Sleep(delay > 0 ? delay : 0);
+            Thread.Sleep(delayMs);
             RemoveFromData(key);
         }
 

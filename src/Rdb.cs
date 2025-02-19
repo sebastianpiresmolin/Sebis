@@ -42,23 +42,23 @@ namespace codecrafters_redis.src
 
             for (int i = 0; i < count; i++)
             {
-                if (dbSection.StartsWith("00")) // String type
-                {
-                    dbSection = ProcessKeyValue(dbSection);
-                }
-                else if (dbSection.StartsWith("FC")) // Millisecond expiry
+                if (dbSection.StartsWith("FC")) // Millisecond expiry
                 {
                     dbSection = dbSection[2..];
                     long expiryMs = long.Parse(dbSection[..16], NumberStyles.HexNumber);
                     dbSection = dbSection[16..];
-                    dbSection = ProcessKeyValue(dbSection, expiryMs);
+                    dbSection = ProcessKeyValue(dbSection, (int)expiryMs);
                 }
                 else if (dbSection.StartsWith("FD")) // Second expiry
                 {
                     dbSection = dbSection[2..];
                     long expiryMs = long.Parse(dbSection[..8], NumberStyles.HexNumber) * 1000;
                     dbSection = dbSection[8..];
-                    dbSection = ProcessKeyValue(dbSection, expiryMs);
+                    dbSection = ProcessKeyValue(dbSection, (int)expiryMs);
+                }
+                else
+                {
+                    dbSection = ProcessKeyValue(dbSection);
                 }
             }
         }
