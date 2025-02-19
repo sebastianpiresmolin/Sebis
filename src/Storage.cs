@@ -29,12 +29,11 @@ namespace codecrafters_redis.src
 
         public void AddToStorageWithExpiry(string key, string value, int expiryMs)
         {
+            data[key] = value;
             var expiryTime = DateTime.UtcNow.AddMilliseconds(expiryMs);
+            expiryTimes[key] = expiryTime;
 
-            data.AddOrUpdate(key, value, (_, _) => value);
-            expiryTimes.AddOrUpdate(key, expiryTime, (_, _) => expiryTime);
-
-            ScheduleExpiryCheck(key, expiryMs);
+            Task.Run(() => ScheduleExpiryCheck(key, expiryMs));
         }
 
         public bool TryGetFromDataByKey(string key, out string? value)

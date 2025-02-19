@@ -47,23 +47,23 @@ namespace codecrafters_redis.src
                     dbSection = dbSection[2..];
                     long expiryMs = long.Parse(dbSection[..16], NumberStyles.HexNumber);
                     dbSection = dbSection[16..];
-                    dbSection = ProcessKeyValue(dbSection, (int)expiryMs);
+                    ProcessKeyValue(ref dbSection, expiryMs);
                 }
                 else if (dbSection.StartsWith("FD")) // Second expiry
                 {
                     dbSection = dbSection[2..];
                     long expiryMs = long.Parse(dbSection[..8], NumberStyles.HexNumber) * 1000;
                     dbSection = dbSection[8..];
-                    dbSection = ProcessKeyValue(dbSection, (int)expiryMs);
+                    ProcessKeyValue(ref dbSection, expiryMs);
                 }
                 else
                 {
-                    dbSection = ProcessKeyValue(dbSection);
+                    ProcessKeyValue(ref dbSection);
                 }
             }
         }
 
-        private string ProcessKeyValue(string hexData, long expiryMs = -1)
+        private void ProcessKeyValue(ref string hexData, long expiryMs = -1)
         {
             hexData = hexData[2..]; // Skip value type
 
@@ -88,8 +88,6 @@ namespace codecrafters_redis.src
             {
                 Storage.Instance.AddToData(key, value);
             }
-
-            return hexData;
         }
 
         private static string HexToString(string hex)
